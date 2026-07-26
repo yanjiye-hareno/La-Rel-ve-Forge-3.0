@@ -49,18 +49,40 @@ function uuid4() { return crypto.randomUUID(); }
 // 瞬时态剥离：有些编排层会往消息里注入一块实时状态（心情/身体/环境/时间等）。那是瞬时的，
 // 不该沉淀进下一段的传承——同一块状态被搬进新 session 就成了过期的"此刻"。
 // 用 --strip-tag <标签名> 指定要剥掉的成对标签，未闭合时兜底截断（宁可多剥不可漏）。
+// 必须在 estimateTokens 之前跑（同 --squash-tools）：剥离若放在切点选完之后，被剥的内容
+// 会先参与 boundary 计算再被删掉，实际接上量系统性低于 --retain（实测中位 -7.3%）。
 let STRIP_TAGS = [];
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); } // 标签名可能含正则元字符，构造 RegExp 前转义
 function stripEphemeral(text) {
   if (typeof text !== 'string' || !STRIP_TAGS.length) return text;
   let out = text;
   for (const tag of STRIP_TAGS) {
     const open = '<' + tag + '>';
     if (out.indexOf(open) === -1) continue;
-    out = out.replace(new RegExp('<' + tag + '>[\\s\\S]*?<\\/' + tag + '>\\n{0,2}', 'g'), '');
+    out = out.replace(new RegExp('<' + escRe(tag) + '>[\\s\\S]*?<\\/' + escRe(tag) + '>\\n{0,2}', 'g'), '');
     const i = out.indexOf(open);
     if (i !== -1) out = out.slice(0, i);
   }
   return out;
+}
+// 原地剥离整个 convs，让 boundary 用剥离后的真实大小计算。
+// 副作用（是改善不是回归）：剥完只剩空白的 user 事件不再被 isRealUserMsg 认作切点锚点——
+// 一条只装着瞬时状态的消息，本来就不该当新 session 的第一幕。
+// sanitizeEvent 里的 stripEphemeral 保留作幂等兜底（已剥过的再剥是 no-op）。
+function stripEphemeralInPlace(convs) {
+  if (!STRIP_TAGS.length) return 0;
+  let n = 0;
+  const s = (t) => { const o = stripEphemeral(t); if (o !== t) n++; return o; };
+  for (const ev of convs) {
+    const c = ev.message?.content;
+    if (typeof c === 'string') ev.message.content = s(c);
+    else if (Array.isArray(c)) for (const b of c) {
+      if (b.type === 'text' && b.text) b.text = s(b.text);
+      else if (b.type === 'thinking' && b.thinking) b.thinking = s(b.thinking);
+    }
+  }
+  if (n) console.log('🧹 strip-tag: ' + n + ' 个块在切点计算前剥离 (' + STRIP_TAGS.join(', ') + ')');
+  return n;
 }
 
 // «forge --squash-tools»：超长工具输出降采样（头60%+尾25%+裁剪标记）。
@@ -187,7 +209,13 @@ function estimateTokens(ev) {
 // 新 session 的第一幕应该是真人说的话，不是一条系统指令。踩过的坑：某次新 session 的开头
 // 是一条自动催睡指令，读起来像"他上来就命令你睡觉"。
 // 用 --skip-markers "a,b" 追加你自己编排层的标记。
-let SYNTHETIC_MARKERS = ['SYSTEM ACTION MODE', '[keepalive]', '<system-reminder>', '[forge交接]', '<forge-handoff>'];
+let SYNTHETIC_MARKERS = ['SYSTEM ACTION MODE', '[keepalive]', '[forge交接]', '<forge-handoff>'];
+// 注意：<system-reminder> 不在黑名单里。CC 把注入块（CLAUDE.md/记忆召回/hook 提示）用
+// <system-reminder> 包在**真人消息内部**——拿它当"这条不是真人说的"的判据会把绝大多数
+// 真话拉黑，切点归零后退化成保留全部（--retain 失效）。正确姿势：判定时把注入块摘掉再看
+// 剩余——有真话＝真人消息（照常当锚点），摘完全空＝纯系统注入（不配当新 session 第一幕）。
+// 内容本身一字不动，只影响锚点判定。
+const SYS_REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 function isRealUserMsg(ev) {
   if (ev.type !== 'user' || ev.isMeta) return false;
   const c = ev.message?.content;
@@ -195,6 +223,7 @@ function isRealUserMsg(ev) {
   let txt = '';
   if (typeof c === 'string') txt = c;
   else if (Array.isArray(c)) txt = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
+  txt = txt.replace(SYS_REMINDER_RE, '');
   if (!txt.trim()) return false;
   return !SYNTHETIC_MARKERS.some(m => txt.includes(m));
 }
@@ -254,6 +283,8 @@ function forge(sid, retain=100000, dry=false, squashChars=0, injectFile=null) {
   const all = loadJsonl(fp);
   const convs = all.filter(e => e.type==='user'||e.type==='assistant');
   console.log('   事件: '+all.length+' 总 / '+convs.length+' 对话');
+  stripEphemeralInPlace(convs);                               // 必须先于 token 估算；也先于 squash——
+                                                              // squash 的末 turn 保护用 isRealUserMsg 判定，要基于剥离后的文本才准
   if (squashChars > 0) squashToolOutputs(convs, squashChars); // 必须先于 token 估算
   // 反向累加找 cut：acc 首次超过 retain 的位置
   let acc=0, cut=0;
@@ -355,4 +386,4 @@ if (require.main === module) {
   console.log('⚙️  retain: '+ret+(squash?' | squash-tools: '+squash:'')+(inject?' | inject: '+inject:'')+(dry?' | DRY RUN':'')+'\n');
   forge(sid,ret,dry,squash,inject);
 }
-module.exports = { stripEphemeral, sanitizeEvent, forge, truncMid, squashToolOutputs };
+module.exports = { stripEphemeral, stripEphemeralInPlace, sanitizeEvent, forge, truncMid, squashToolOutputs };
