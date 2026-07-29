@@ -29,9 +29,23 @@ const HANDOFF_DIR   = path.join(HOME, '.claude', 'releve-handoff');   // 每段�
 const SUMMARY_FILE  = path.join(HOME, '.claude', 'releve-summary.md'); // 滚动摘要（三段制）
 const TAILNOTES_FILE= path.join(HOME, '.claude', 'releve-tailnotes.md'); // 红线尾注，别写长
 
+// ---------------------------------------------------------------- 摘要预算（可覆盖，不用改代码）
+// 三个数可以用 ~/.claude/releve-config.json 覆盖，形如：
+//   { "summary_max": 10000, "summary_hot_days": 2, "summary_aged_days": 30 }
+// 没有这个文件就用下面的默认值。三个数是联动的——只调一个会埋坑：
+//   热段体积 ≈ summary_hot_days × 你的日密度（字符/天）
+//   总需求  ≈ 热段 ＋ 陈段（陈 ≈ 剩余天数 × 日密度 ÷ 3）
+// 例：密度 4200/天，热 5 天 ≈ 21K——这时把 summary_max 砍到 10000 热段就直接爆顶。
+// 想要小预算（如 10000），热窗要一起收（如 2 天）。取舍详见 README「摘要预算怎么定」。
+const RELEVE_CONFIG = path.join(HOME, '.claude', 'releve-config.json');
+function releveConfig() {
+  try { return JSON.parse(fs.readFileSync(RELEVE_CONFIG, 'utf-8')); } catch (e) { return {}; }
+}
+const _cfg = releveConfig();
+
 // 叙事段字符上限。先量自己的密度再定：一天的叙事 ≈ 多少字符 × 你想要的跨度。
 // 上限不是目标值——天花板高一点无害，滚的规则错了才有害。
-const SUMMARY_MAX = 35000;
+const SUMMARY_MAX = Number(_cfg.summary_max) || 35000;
 
 // ---------------------------------------------------------------- 三个适配点（替换成你的）
 async function sendToAgent(prompt, opts) { throw new Error('adapt me: send one message to the live CC process'); }
@@ -68,8 +82,8 @@ function summaryPrompt() {
 // 机制：叙事节 热(HOT天详写) → 陈(压一次至~1/3，标[陈]) → 退场(整节原文归档)。
 // 任何节禁止第二次压缩——反复压缩才是记忆磨损的真凶。详见 README「滚动摘要 · 陈酿制」。
 const ARCHIVE_FILE = path.join(HOME, '.claude', 'releve-archive.md'); // 退场节归档（原文，非压缩）
-const SUMMARY_HOT_DAYS = 5;    // 热段天数：全细节详写的范围
-const SUMMARY_AGED_DAYS = 30;  // 退场天数：[陈]节在摘要里停留的总时长
+const SUMMARY_HOT_DAYS = Number(_cfg.summary_hot_days) || 5;    // 热段天数：全细节详写的范围（与 summary_max 联动，见上）
+const SUMMARY_AGED_DAYS = Number(_cfg.summary_aged_days) || 30; // 退场天数：[陈]节在摘要里停留的总时长
 function summaryPromptAging() {
   return '<system-reminder>[交接] 第一步：更新滚动摘要 ' + SUMMARY_FILE
     + '。工序纪律：先读一遍现文件，然后只用局部编辑工具（Edit/精确替换）做修改，不许用写文件工具全文重写——'
