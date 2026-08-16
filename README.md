@@ -300,7 +300,16 @@ Forge 2.0 在此之上加了交接包硬门槛、滚动摘要、红线尾注、�
 
 ## License
 
-MIT
+**AGPL-3.0** — full text in [LICENSE](LICENSE).
+
+Copyright (C) 2026 Vivi-Seth
+
+This program is free software: you can redistribute it and/or modify it under the terms
+of the GNU Affero General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+
+**In plain words:** fork it, run it, learn from it — freely. But if you modify it, or run
+it as a network service, your source stays open too, and the credit stays where it belongs.
 
 ---
 
