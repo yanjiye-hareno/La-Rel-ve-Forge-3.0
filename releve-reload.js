@@ -208,9 +208,9 @@ function estimateTokens(ev) {
 // 切点黑名单：系统伪装成 user 的内部触发（定时唤醒/保活/交接指令/主动来电）不配当边界锚点——
 // 新 session 的第一幕应该是真人说的话，不是一条系统指令。踩过的坑：某次新 session 的开头
 // 是一条自动催睡指令，读起来像"他上来就命令你睡觉"。
-// 用 --skip-markers "a,b" 追加你自己编排层的标记；每个标记请给「该系统消息某一行的开头串」。
+// 用 --skip-markers "a,b" 追加你自己编排层的标记；每个标记请给该系统消息某一行的行首前缀。
 // 判定是行首锚定：标记只在某行行首（容前置空白）命中才算系统消息——全文 includes 会把
-// 「引用系统句来讨论的真人消息」整则误杀（如 "我日志里的 [keepalive] 是什么？"），该条被
+// 「引用系统句来讨论的真人消息」整条误杀（如 "我日志里的 [keepalive] 是什么？"），该条被
 // 拉黑后切点被推离预期，严重时退化成保留全部（--retain 失效）。真人引用几乎都在句中，
 // 系统注入块的识别串都在行首；误判两侧的代价都只是切点偏移，precision 优先。
 let SYNTHETIC_MARKERS = ['SYSTEM ACTION MODE', '[keepalive]', '[forge交接]', '<forge-handoff>'];
@@ -226,7 +226,7 @@ function isRealUserMsg(ev) {
   if (!c) return false;
   let txt = '';
   if (typeof c === 'string') txt = c;
-  else if (Array.isArray(c)) txt = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
+  else if (Array.isArray(c)) txt = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n'); // 块之间按换行拼，块首也算行首
   txt = txt.replace(SYS_REMINDER_RE, '');
   if (!txt.trim()) return false;
   const lineHeads = txt.split('\n').map(l => l.trimStart());
@@ -296,8 +296,8 @@ function forge(sid, retain=100000, dry=false, squashChars=0, injectFile=null) {
   for (let i=convs.length-1; i>=0; i--) { acc+=estimateTokens(convs[i]); if(acc>retain){cut=i+1;break;} }
   // 末尾事件自身就超过 retain 时（典型：末 turn 带巨大 tool_result，被 squash 的末 turn 保护跳过），
   // cut 会指到数组外：ks_back 从 convs[convs.length] 起扫，isRealUserMsg(undefined) 直接 TypeError。
-  // clamp 回最后一格，让双向扫描从末尾事件开始、照常回退找锚点。
-  // Math.max 护住 convs 为空的退化场景（此时 cut 维持 0，走下游「kept is empty」的正常 abort，
+  // clamp 回最后一个下标，让双向扫描从末尾事件开始、照常回退找锚点。
+  // Math.max 护住 convs 为空的退化场景（此时 cut 维持 0，走后面「kept is empty」的正常 abort，
   // 而不是负索引 convs[-1] 再以同一个 TypeError 炸一次）。
   if (cut >= convs.length) cut = Math.max(0, convs.length - 1);
 
