@@ -208,7 +208,11 @@ function estimateTokens(ev) {
 // 切点黑名单：系统伪装成 user 的内部触发（定时唤醒/保活/交接指令/主动来电）不配当边界锚点——
 // 新 session 的第一幕应该是真人说的话，不是一条系统指令。踩过的坑：某次新 session 的开头
 // 是一条自动催睡指令，读起来像"他上来就命令你睡觉"。
-// 用 --skip-markers "a,b" 追加你自己编排层的标记。
+// 用 --skip-markers "a,b" 追加你自己编排层的标记；每个标记请给「该系统消息某一行的开头串」。
+// 判定是行首锚定：标记只在某行行首（容前置空白）命中才算系统消息——全文 includes 会把
+// 「引用系统句来讨论的真人消息」整则误杀（如 "我日志里的 [keepalive] 是什么？"），该条被
+// 拉黑后切点被推离预期，严重时退化成保留全部（--retain 失效）。真人引用几乎都在句中，
+// 系统注入块的识别串都在行首；误判两侧的代价都只是切点偏移，precision 优先。
 let SYNTHETIC_MARKERS = ['SYSTEM ACTION MODE', '[keepalive]', '[forge交接]', '<forge-handoff>'];
 // 注意：<system-reminder> 不在黑名单里。CC 把注入块（CLAUDE.md/记忆召回/hook 提示）用
 // <system-reminder> 包在**真人消息内部**——拿它当"这条不是真人说的"的判据会把绝大多数
@@ -225,7 +229,8 @@ function isRealUserMsg(ev) {
   else if (Array.isArray(c)) txt = c.filter(b => b.type === 'text' && b.text).map(b => b.text).join('');
   txt = txt.replace(SYS_REMINDER_RE, '');
   if (!txt.trim()) return false;
-  return !SYNTHETIC_MARKERS.some(m => txt.includes(m));
+  const lineHeads = txt.split('\n').map(l => l.trimStart());
+  return !SYNTHETIC_MARKERS.some(m => lineHeads.some(h => h.startsWith(m)));
 }
 function loadJsonl(fp) {
   const evs = [];
