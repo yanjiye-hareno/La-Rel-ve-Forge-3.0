@@ -297,7 +297,9 @@ function forge(sid, retain=100000, dry=false, squashChars=0, injectFile=null) {
   // 末尾事件自身就超过 retain 时（典型：末 turn 带巨大 tool_result，被 squash 的末 turn 保护跳过），
   // cut 会指到数组外：ks_back 从 convs[convs.length] 起扫，isRealUserMsg(undefined) 直接 TypeError。
   // clamp 回最后一格，让双向扫描从末尾事件开始、照常回退找锚点。
-  if (cut >= convs.length) cut = convs.length - 1;
+  // Math.max 护住 convs 为空的退化场景（此时 cut 维持 0，走下游「kept is empty」的正常 abort，
+  // 而不是负索引 convs[-1] 再以同一个 TypeError 炸一次）。
+  if (cut >= convs.length) cut = Math.max(0, convs.length - 1);
 
   // 从 cut 双向找最近 real user msg boundary，选让 kept tokens 更接近 retain 的方向
   // - forward (ks++): kept 更少（跳过 cut→下一 user 之间整段 assistant）
